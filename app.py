@@ -1,57 +1,52 @@
 import streamlit as st
-import numpy as np
 from PIL import Image
-from keras.models import load_model
+import torch
+from transformers import AutoImageProcessor, AutoModelForImageClassification
 
-# --- Page Setup ---
-st.set_page_config(page_title="Pneumonia Detection", page_icon="🩻")
-st.title("🩻 Pneumonia Detection from Chest X-Ray")
-st.write("Sirf Chest X-Ray upload karein. Cartoon ya doosri photo upload karne par app rok dega.")
+st.set_page_config(page_title="Pneumonia Detection", page_icon="🫁")
+st.title("🫁 Pneumonia Detection from Chest X-Ray")
+st.write("Chest X-Ray upload karein, model batayega NORMAL hai ya PNEUMONIA.")
 
-# --- Model Load ---
+MODEL_ID = "adham-shah/pediatric-chest-xray-pneumonia-vit"
+
 @st.cache_resource
-def load_my_model():
-    model = load_model("pneumonia_model.h5")
-    return model
+def load_model():
+    processor = AutoImageProcessor.from_pretrained(MODEL_ID)
+    model = AutoModelForImageClassification.from_pretrained(MODEL_ID)
+    model.eval()
+    return processor, model
 
-model = load_my_model()
+processor, model = load_model()
 
-# --- GUARD FUNCTION (Cartoon Rokne Wala) ---
-def is_xray_image(uploaded_image):
-    img = np.array(uploaded_image.convert("RGB"))
-    r, g, b = img[:,:,0], img[:,:,1], img[:,:,2]
-    # X-Ray me color nahi hota, cartoon me hota hai
-    color_diff = np.mean(np.abs(r.astype(int) - g.astype(int)) + np.abs(g.astype(int) - b.astype(int)))
-    if color_diff > 15:
-        return False, "Ye X-Ray nahi lag rahi, is me color hai. Sirf Chest X-Ray upload karein."
-    return True, "OK"
-
-# --- Upload ---
-uploaded_file = st.file_uploader("Chest X-Ray upload karein", type=["jpg", "jpeg", "png"])
+uploaded_file = st.file_uploader("Chest X-Ray Upload Karein", type=["jpg", "jpeg", "png"])
 
 if uploaded_file is not None:
-    image = Image.open(uploaded_file)
-    st.image(image, caption="Uploaded Image", use_column_width=True)
+    image = Image.open(uploaded_file).convert("RGB")
+    st.image(image, caption="Uploaded X-Ray", use_container_width=True)
 
-    # PEHLE GUARD CHECK KAREGA
-    is_valid, msg = is_xray_image(image)
-    if not is_valid:
-        st.error(f"⚠️ {msg}")
-        st.stop()
+    with st.spinner("Analyzing..."):
+        inputs = processor(image, return_tensors="pt")
+        with torch.no_grad():
+            outputs = model(**inputs)
+            probs = torch.nn.functional.softmax(outputs.logits, dim=1)[0]
 
-    # AGAR X-RAY SAHI HAI TAB HI MODEL CHALEGA
-    if st.button("Predict Karein"):
-        # Image ko model ke size pe le aao (150x150)
-        img_resized = image.convert("RGB").resize((150, 150))
-        img_array = np.array(img_resized) / 255.0
-        img_array = np.expand_dims(img_array, axis=0)
+        labels = model.config.id2label
+        # labels: 0 = NORMAL, 1 = PNEUMONIA
+        pred_id = int(probs.argmax().item())
+        pred_label = labels[pred_id]
+        conf = float(probs[pred_id]) * 100
 
-        prediction = model.predict(img_array)
-        confidence = float(prediction[0][0])
+        st.subheader(f"Result: {pred_label}")
+        st.write(f"Confidence: {conf:.2f}%")
+        st.progress(conf / 100)
 
-        if confidence > 0.5:
-            st.error(f"Result: PNEUMONIA hai ({confidence*100:.1f}% confidence)")
+        if pred_label.upper() == "PNEUMONIA":
+            st.error("⚠️ Pneumonia Detected - Please consult a doctor.")
         else:
-            st.success(f"Result: NORMAL hai ({(1-confidence)*100:.1f}% confidence)")
+            st.success("✅ Normal - Pneumonia Not Detected.")
 
-        st.info("Note: Ye AI prediction hai, final decision doctor karega.")
+        st.write("**Probabilities:**")
+        for i, label in labels.items():
+            st.write(f"- {label}: {float(probs[i])*100:.2f}%")
+
+st.caption("Educational demo only. Not for real medical diagnosis.")
