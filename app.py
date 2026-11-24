@@ -1,6 +1,5 @@
 import streamlit as st
 import numpy as np
-import cv2
 from PIL import Image
 from tensorflow.keras.models import load_model
 
@@ -25,11 +24,6 @@ def is_xray_image(uploaded_image):
     color_diff = np.mean(np.abs(r.astype(int) - g.astype(int)) + np.abs(g.astype(int) - b.astype(int)))
     if color_diff > 15:
         return False, "Ye X-Ray nahi lag rahi, is me color hai. Sirf Chest X-Ray upload karein."
-    
-    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-    if np.mean(gray) > 240 or np.mean(gray) < 10:
-        return False, "Ye sahi X-Ray nahi lag rahi."
-    
     return True, "OK"
 
 # --- Upload ---
