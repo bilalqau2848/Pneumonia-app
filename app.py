@@ -1,7 +1,7 @@
 import streamlit as st
 import numpy as np
 from PIL import Image
-from tensorflow.keras.models import load_model
+from keras.models import load_model
 
 # --- Page Setup ---
 st.set_page_config(page_title="Pneumonia Detection", page_icon="🩻")
