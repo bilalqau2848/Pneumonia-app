@@ -1,55 +1,63 @@
 import streamlit as st
-import torch
-import torch.nn as nn
-from torchvision import models, transforms
+import numpy as np
+import cv2
 from PIL import Image
-import requests
+from tensorflow.keras.models import load_model
 
-st.set_page_config(page_title="Pneumonia Detector", page_icon="🩺")
-st.title("🩺 Pediatric Pneumonia Detector")
-st.write("Chest X-Ray upload karo, model batayega Pneumonia hai ya Normal.")
+# --- Page Setup ---
+st.set_page_config(page_title="Pneumonia Detection", page_icon="🩻")
+st.title("🩻 Pneumonia Detection from Chest X-Ray")
+st.write("Sirf Chest X-Ray upload karein. Cartoon ya doosri photo upload karne par app rok dega.")
 
+# --- Model Load ---
 @st.cache_resource
-def load_model():
-    url = "https://huggingface.co/Bilalqau/Pneumonia-model/resolve/main/best_model.pth"
-    r = requests.get(url)
-    open("best_model.pth", "wb").write(r.content)
-    device = torch.device("cpu")
-    sd = torch.load("best_model.pth", map_location=device)
+def load_my_model():
+    model = load_model("pneumonia_model.h5")
+    return model
 
-    # fc ka size file se dekh lo
-    out_f = sd['fc.weight'].shape[0]
+model = load_my_model()
 
-    # Asli model = ResNet18, 1 channel
-    model = models.resnet18(weights=None)
-    model.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
-    model.fc = nn.Linear(512, out_f)
-    model.load_state_dict(sd)
-    model.eval()
-    return model, out_f
+# --- GUARD FUNCTION (Cartoon Rokne Wala) ---
+def is_xray_image(uploaded_image):
+    img = np.array(uploaded_image.convert("RGB"))
+    r, g, b = img[:,:,0], img[:,:,1], img[:,:,2]
+    # X-Ray me color nahi hota, cartoon me hota hai
+    color_diff = np.mean(np.abs(r.astype(int) - g.astype(int)) + np.abs(g.astype(int) - b.astype(int)))
+    if color_diff > 15:
+        return False, "Ye X-Ray nahi lag rahi, is me color hai. Sirf Chest X-Ray upload karein."
+    
+    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    if np.mean(gray) > 240 or np.mean(gray) < 10:
+        return False, "Ye sahi X-Ray nahi lag rahi."
+    
+    return True, "OK"
 
-model, out_f = load_model()
+# --- Upload ---
+uploaded_file = st.file_uploader("Chest X-Ray upload karein", type=["jpg", "jpeg", "png"])
 
-eval_tf = transforms.Compose([
-    transforms.Resize((224, 224)),
-    transforms.ToTensor(),
-    transforms.Normalize([0.485], [0.229])
-])
+if uploaded_file is not None:
+    image = Image.open(uploaded_file)
+    st.image(image, caption="Uploaded Image", use_column_width=True)
 
-uploaded = st.file_uploader("X-Ray ki pic yahan dalo", type=["jpg","jpeg","png"])
-if uploaded:
-    img = Image.open(uploaded).convert("L")
-    st.image(img, caption="Uploaded X-Ray", width=300)
-    x = eval_tf(img).unsqueeze(0)
-    with torch.no_grad():
-        out = model(x)
-        if out_f == 1:
-            prob = torch.sigmoid(out.squeeze(1)).item()
+    # PEHLE GUARD CHECK KAREGA
+    is_valid, msg = is_xray_image(image)
+    if not is_valid:
+        st.error(f"⚠️ {msg}")
+        st.stop()
+
+    # AGAR X-RAY SAHI HAI TAB HI MODEL CHALEGA
+    if st.button("Predict Karein"):
+        # Image ko model ke size pe le aao (150x150)
+        img_resized = image.convert("RGB").resize((150, 150))
+        img_array = np.array(img_resized) / 255.0
+        img_array = np.expand_dims(img_array, axis=0)
+
+        prediction = model.predict(img_array)
+        confidence = float(prediction[0][0])
+
+        if confidence > 0.5:
+            st.error(f"Result: PNEUMONIA hai ({confidence*100:.1f}% confidence)")
         else:
-            prob = torch.softmax(out, dim=1)[0][1].item()
+            st.success(f"Result: NORMAL hai ({(1-confidence)*100:.1f}% confidence)")
 
-    THR = 0.6457
-    if prob >= THR:
-        st.error(f"⚠️ PNEUMONIA - Confidence: {prob*100:.1f}%")
-    else:
-        st.success(f"✅ NORMAL - Confidence: {(1-prob)*100:.1f}%")
+        st.info("Note: Ye AI prediction hai, final decision doctor karega.")
